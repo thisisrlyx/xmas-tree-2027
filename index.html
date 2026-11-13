@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<title>ASCII Christmas Tree 2027</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+/* Layout: one 9:16 story-shaped canvas centred on a night-sky page, with a quiet visitor drawer for the owner. */
+:root {
+  --night: #04060c;
+  --snow: #dfe6f7;
+  --dim: #606a7a;
+  --gold: #ffc45a;
+  --holly: #1f9d46;
+  --card: #0b1020;
+  --line: #1b2438;
+  --mono: "JetBrains Mono", Consolas, Menlo, "DejaVu Sans Mono", "Courier New", monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--night); color: var(--snow); font-family: var(--mono); overflow: hidden; }
+#stage { height: 100%; display: flex; align-items: center; justify-content: center; position: relative; }
+canvas { display: block; max-width: 100%; max-height: 100%; aspect-ratio: 792 / 1260; touch-action: manipulation; }
+.bar { display: none; position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; justify-content: center;
+  padding: 8px max(16px, env(safe-area-inset-left, 0px)) 8px max(16px, env(safe-area-inset-right, 0px)); }
+button { font: 12px var(--mono); color: var(--dim); background: transparent; border: 1px solid var(--line);
+  padding: 6px 12px; cursor: pointer; border-radius: 3px; }
+button:hover, button:focus-visible { color: var(--gold); border-color: var(--gold); outline: none; }
+#log { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%); background: var(--card);
+  border-left: 1px solid var(--line); padding: 16px max(16px, env(safe-area-inset-right, 0px)); overflow-y: auto; }
+#log h2 { font-size: 13px; color: var(--gold); margin: 0 0 4px; letter-spacing: .08em; text-transform: uppercase; }
+#log p { font-size: 11px; color: var(--dim); margin: 0 0 12px; line-height: 1.5; }
+#log ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#log li { display: grid; grid-template-columns: 2.2em 1fr auto; gap: 8px; font-size: 12px; min-width: 0; }
+#log li b { color: var(--gold); font-weight: 700; font-variant-numeric: tabular-nums; }
+#log li span:nth-child(2) { overflow-wrap: anywhere; }
+#log li time { color: var(--dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+#close { float: right; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="c" aria-label="Animated ASCII Christmas tree, 2027"></canvas>
+  <div class="bar">
+    <button id="pause">Pause</button>
+    <button id="restart">Restart</button>
+  </div>
+</div>
+
+<script>
+(() => {
+const TAU = Math.PI * 2;
+const COLS = 88, ROWS = 90, CW = 9, CH = 14, FONT_PX = 15;
+const W = COLS * CW, H = ROWS * CH;
+const GROUND = 0, Y0 = 0.95, Y1 = 5.25, RMAX = 1.9;
+const YC = 2.4, SCALE = 10, CAM = 18, ASPECT = CH / CW;
+const GROUND_ROW = Math.round(ROWS / 2 + YC * SCALE);          // where the tree meets the floor
+const MESSAGE = "M E R R Y   C H R I S T M A S   2 0 2 7";
+const T_GROW = [0.4, 5.0], T_GARLAND = [5.0, 7.6], T_BALLS = [6.8, 8.8];
+const T_LIGHTS = [9.0, 12.0], T_GIFTS = [9.6, 11.8], T_STAR = 12.2, T_MSG = 13.2, T_LOOP = 44;
+const RED = [.9, .1, .12], GOLD = [1, .78, .25], GREEN = [.1, .62, .26], BLUE = [.2, .42, .95];
+const WHITE = [1, 1, 1], SILVER = [.78, .82, .9], WARM = [1, .8, .42], TRUNK = [.42, .26, .12], BGOLD = [1, .72, .18];
+const MATTE = 0, TINSEL = 1, BALL = 2, LIGHT = 3;
+const RAMP = ".:-~=+*vxo&%#WM@";
+const DIM = [96, 104, 122], ACCENT = [255, 196, 90], SIGN = [176, 168, 196];
+
+// ---------- helpers
+function rngMaker(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const rnd = rngMaker(7);
+const normal = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(TAU * rnd());
+const uni = (a, b) => a + (b - a) * rnd();
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const smooth = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+const easeBack = x => { x = clamp(x, 0, 1); return 1 + 3.2 * (x - 1) ** 3 + 2.2 * (x - 1) ** 2; };
+const envelope = y => RMAX * Math.pow(clamp((Y1 - y) / (Y1 - Y0), 0, 1), 0.92);
+const surfaceY = (yw, r) => yw + 0.06 * r - 0.2 * r * r;
+const growTime = y => T_GROW[0] + (T_GROW[1] - T_GROW[0]) * clamp((y - GROUND) / (Y1 - GROUND), 0, 1);
+function fib(n) { const o = []; for (let i = 0; i < n; i++) { const f = Math.acos(1 - 2 * (i + .5) / n), th = Math.PI * (1 + Math.sqrt(5)) * (i + .5); o.push([Math.cos(th) * Math.sin(f), Math.cos(f), Math.sin(th) * Math.sin(f)]); } return o; }
+function unit3(x, y, z) { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; }
+
+// ---------- particles (struct of arrays)
+const P = { px: [], py: [], pz: [], nx: [], ny: [], nz: [], cr: [], cg: [], cb: [], mat: [], t0: [], base: [], ph: [], cx: [], cy: [], cz: [], pop: [], jit: [] };
+function add(p, n, c, mat, t0, base, centre, phase, pop) {
+  const nn = unit3(n[0], n[1], n[2]), cen = centre || p;
+  P.px.push(p[0]); P.py.push(p[1]); P.pz.push(p[2]); P.nx.push(nn[0]); P.ny.push(nn[1]); P.nz.push(nn[2]);
+  P.cr.push(c[0]); P.cg.push(c[1]); P.cb.push(c[2]); P.mat.push(mat); P.t0.push(t0); P.base.push(base);
+  P.ph.push(phase); P.cx.push(cen[0]); P.cy.push(cen[1]); P.cz.push(cen[2]); P.pop.push(pop ? 1 : 0); P.jit.push(rnd());
+}
+const tips = [], lightT0 = [];
+function build() {
+  // needles
+  for (let i = 0; i < 24; i++) {
+    const y = Y0 + 0.02 + (Y1 - 0.06 - Y0 - 0.02) * i / 23, u = (y - Y0) / (Y1 - Y0), R = envelope(y) + 0.05, nb = Math.floor(6 + 12 * (1 - u));
+    for (let b = 0; b < nb; b++) {
+      const a = TAU * (b + 0.5 * rnd()) / nb + i * 0.77, L = R * uni(0.85, 1.08), n = Math.floor(25 + 230 * L);
+      const dx = Math.cos(a), dz = Math.sin(a), sx = -dz, sz = dx;
+      for (let k = 0; k < n; k++) {
+        const s = Math.pow(rnd(), 0.65), sp = (0.025 + 0.09 * s) * normal(), sl = s * L;
+        const p = [dx * sl + sx * sp, y + 0.06 * sl - 0.2 * sl * sl + 0.012 * normal(), dz * sl + sz * sp];
+        const nr = unit3(dx * .75 + .3 * normal(), .55 + .3 * normal(), dz * .75 + .3 * normal());
+        const ao = (0.3 + 0.7 * Math.pow(s, 1.3)) * uni(.75, 1.1);
+        const snow = s > .5 && rnd() < .06 * s && nr[1] > .5, g = rnd() * .6;
+        add(p, nr, snow ? WHITE : [.10 + .12 * g, .48 + .38 * g, .18 + .14 * g], MATTE, growTime(y) + .45 * s, snow ? 1 : ao, null, 0, false);
+      }
+      const tl = 0.93 * L; tips.push([dx * tl, y + 0.06 * tl - 0.2 * tl * tl, dz * tl]);
+    }
+  }
+  // dark inner cone
+  for (let k = 0; k < 6000; k++) {
+    const y = Y0 + (Y1 - .1 - Y0) * rnd(), ph = rnd() * TAU, r = .6 * envelope(y);
+    add([Math.cos(ph) * r, y, Math.sin(ph) * r], [Math.cos(ph), .3, Math.sin(ph)], [.05, .22, .09], MATTE, growTime(y), .75, null, 0, false);
+  }
+  // trunk
+  for (let k = 0; k < 1500; k++) {
+    const y = GROUND + rnd() * (Y0 + .1 - GROUND), ph = rnd() * TAU, bark = .75 + .25 * Math.sign(Math.sin(ph * 30 + y * 5));
+    add([Math.cos(ph) * .08, y, Math.sin(ph) * .08], [Math.cos(ph), 0, Math.sin(ph)], TRUNK.map(v => v * bark), MATTE, growTime(y), 1, null, 0, false);
+  }
+  // tinsel garland
+  for (let rep = 0; rep < 4; rep++) for (let i = 0; i < 2600; i++) {
+    const u = i / 2599, yw = Y0 + .15 + (Y1 - Y0 - .45) * u, ag = TAU * 3.6 * u + .9, rg = envelope(yw) + .07;
+    const yy = surfaceY(yw, rg) - .07 * Math.abs(Math.sin(ag * 2.5)) + .03;
+    add([Math.cos(ag) * rg + .016 * normal(), yy + .016 * normal(), Math.sin(ag) * rg + .016 * normal()], [Math.cos(ag) + .6, .9, Math.sin(ag) + .6], GOLD, TINSEL, T_GARLAND[0] + u * (T_GARLAND[1] - T_GARLAND[0]), 1, null, rnd(), false);
+  }
+  // baubles
+  const sph = fib(160);
+  for (let k = 0; k < 34; k++) {
+    const u = (k + rnd()) / 34, yw = Y0 + .08 + u * (Y1 - Y0 - .38), a = k * 2.39996 + rnd() * .4, r = envelope(yw) * .92;
+    const c = [Math.cos(a) * r, surfaceY(yw, r) - .04, Math.sin(a) * r], rad = .07 + .045 * (1 - u);
+    const col = k % 2 === 0 ? RED : (k % 4 === 1 ? BGOLD : SILVER), t0 = uni(T_BALLS[0], T_BALLS[1]);
+    for (const s of sph) add([c[0] + s[0] * rad, c[1] + s[1] * rad, c[2] + s[2] * rad], s, col, BALL, t0, 1, c, 0, true);
+  }
+  // fairy lights
+  const bulb = fib(16), idx = tips.map((_, i) => i).sort(() => rnd() - .5).slice(0, 170);
+  for (const i of idx) {
+    const c = tips[i], t0 = uni(T_LIGHTS[0], T_LIGHTS[1]), col = rnd() < .8 ? WARM : [1, .95, .85], ph = rnd();
+    lightT0.push(t0);
+    for (const s of bulb) add([c[0] + s[0] * .035, c[1] + s[1] * .035, c[2] + s[2] * .035], s, col, LIGHT, t0, 1, c, ph, true);
+  }
+  lightT0.sort((a, b) => a - b);
+  // gifts
+  const G = 1.6, loop = fib(80);
+  const gifts = [[.3, 1.12, .30, .24, .28, .4, RED, GOLD], [1.5, 1.18, .26, .30, .26, .9, BLUE, SILVER], [2.6, 1.10, .34, .18, .26, 1.0, GOLD, RED],
+    [3.7, 1.18, .24, .26, .24, .5, GREEN, GOLD], [4.7, 1.12, .30, .22, .30, .1, GREEN, RED], [5.6, 1.22, .22, .34, .22, .7, RED, WHITE]];
+  gifts.forEach(([a, dist, w0, h0, d0, rot, body, rib], g) => {
+    const w = w0 * G, h = h0 * G, d = d0 * G, rw = .06, cr = Math.cos(rot), sr = Math.sin(rot);
+    const bx = Math.cos(a) * dist * 1.55, bz = Math.sin(a) * dist * 1.55;
+    const t0 = T_GIFTS[0] + g / gifts.length * (T_GIFTS[1] - T_GIFTS[0]), cen = [bx, h / 2, bz];
+    const put = (p, n, c) => add([p[0] * cr + p[2] * sr + bx, p[1], -p[0] * sr + p[2] * cr + bz], [n[0] * cr + n[2] * sr, n[1], -n[0] * sr + n[2] * cr], c, MATTE, t0, 1, cen, 0, true);
+    const areas = [w * d, h * d, h * d, h * w, h * w], tot = areas.reduce((x, y) => x + y), m = Math.floor(5000 * tot);
+    for (let k = 0; k < m; k++) {
+      let r = rnd() * tot, f = 0; while (f < 4 && r > areas[f]) { r -= areas[f]; f++; }
+      const fa = rnd() - .5, fb = rnd() - .5; let p, n, rb;
+      if (f === 0) { p = [fa * w, h, fb * d]; n = [0, 1, 0]; rb = Math.abs(fa * w) < rw || Math.abs(fb * d) < rw; }
+      else if (f < 3) { const s = f === 1 ? 1 : -1; p = [s * w / 2, (fb + .5) * h, fa * d]; n = [s, 0, 0]; rb = Math.abs(fa * d) < rw; }
+      else { const s = f === 3 ? 1 : -1; p = [fa * w, (fb + .5) * h, s * d / 2]; n = [0, 0, s]; rb = Math.abs(fa * w) < rw; }
+      const j = .9 + .2 * rnd(); put(p, n, (rb ? rib : body).map(v => v * j));
+    }
+    const top = [0, h + .02, 0];
+    for (const sx of [-1, 0, 1]) for (const l of loop) {
+      const sc = sx === 0 ? [.04, .04, .04] : [.09, .06, .04], off = sx === 0 ? [0, .03, 0] : [sx * .10, .05, 0];
+      put([top[0] + off[0] + l[0] * sc[0], top[1] + off[1] + l[1] * sc[1], top[2] + off[2] + l[2] * sc[2]], l, rib);
+    }
+  });
+  // sort by appear time into typed arrays
+  const N = P.t0.length, order = Array.from({ length: N }, (_, i) => i).sort((a, b) => P.t0[a] - P.t0[b]);
+  for (const key in P) { const src = P[key], T = key === 'mat' || key === 'pop' ? Uint8Array : Float32Array, dst = new T(N); for (let i = 0; i < N; i++) dst[i] = src[order[i]]; P[key] = dst; }
+}
+build();
+const NP = P.t0.length;
+
+// ---------- scene state
+const CELLS = COLS * ROWS;
+const chr = new Uint8Array(CELLS), cR = new Float32Array(CELLS), cG = new Float32Array(CELLS), cB = new Float32Array(CELLS);
+const zbuf = new Float32Array(CELLS), owner = new Int32Array(CELLS);
+const gc = ch => ch.charCodeAt(0) - 32;
+const ramp = [...RAMP].map(gc);
+function put(r, c, ch, tint, k) { if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return; const i = r * COLS + c; chr[i] = gc(ch); cR[i] = clamp(tint[0] * k, 0, 1); cG[i] = clamp(tint[1] * k, 0, 1); cB[i] = clamp(tint[2] * k, 0, 1); }
+
+const R2 = rngMaker(11);
+const stars = Array.from({ length: 300 }, () => ({ r: Math.floor(R2() * ROWS), c: Math.floor(R2() * COLS), ph: R2() * TAU, sp: 0.6 + R2() * 1.6, ch: "+++++*."[Math.floor(R2() * 7)] }));
+const flakes = Array.from({ length: 150 }, () => ({ x: R2() * COLS, y: R2() * ROWS, v: 2 + R2() * 4, ph: R2() * TAU, ch: "++*."[Math.floor(R2() * 4)] }));
+const HZ = Math.floor(GROUND_ROW - ROWS * 0.22);
+const ground = new Uint8Array(CELLS), gch = new Uint8Array(CELLS), gbr = new Float32Array(CELLS);
+for (let r = HZ; r < ROWS; r++) for (let c = 0; c < COLS; c++) { const i = r * COLS + c; if (R2() < .3 + .6 * (r - HZ) / (ROWS - HZ)) { ground[i] = 1; gch[i] = gc("..::-=-.::"[Math.floor(R2() * 10)]); gbr[i] = .28 + .42 * R2(); } }
+
+function star(cx, cy, size, flash) {
+  const tint = GOLD.map((v, i) => v * (1 - flash) + 1 * flash), arms = "#*+-:.";
+  for (let r = -1; r <= 1; r++) for (let c = -2; c <= 2; c++) put(cy + r, cx + c, Math.abs(r) + Math.abs(c) > 1 ? "#" : "@", tint, 1);
+  for (let k = 1; k <= size; k++) { const ch = arms[Math.min(k - 1, 5)]; put(cy - 1 - k, cx, ch, tint, 1 - .07 * k); put(cy + 1 + k, cx, ch, tint, 1 - .07 * k); }
+  for (let k = 1; k <= Math.floor(size * ASPECT); k++) { const ch = arms[Math.min(Math.floor(k / ASPECT), 5)]; put(cy, cx - 2 - k, ch, tint, .9 - .04 * k); put(cy, cx + 2 + k, ch, tint, .9 - .04 * k); }
+  for (let k = 1; k <= Math.floor(size * .6); k++) for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) put(cy + sy * (k + 1), cx + sx * (k * 2 + 2), sy < 0 ? "'" : ".", tint, .7);
+  if (flash > .05) for (let k = 0; k < Math.floor(flash * 10); k++) { const an = k * 2.4 + flash * 4; put(Math.floor(cy + Math.sin(an) * (3 + k * .6)), Math.floor(cx + Math.cos(an) * (3 + k * .6) * ASPECT), "+", WHITE, flash); }
+}
+
+const info = { rot: 0, lights: 0, letters: 0, t: 0 };
+function frame(t) {
+  chr.fill(0); zbuf.fill(-1e9); owner.fill(-1);
+  const rotDeg = (17.5 * t) % 360, rot = rotDeg * Math.PI / 180, cs = Math.cos(rot), sn = Math.sin(rot);
+  // background
+  for (let i = 0; i < CELLS; i++) if (ground[i]) { chr[i] = gch[i]; cR[i] = .3 * gbr[i] * 1.0; cG[i] = .36 * gbr[i]; cB[i] = .5 * gbr[i]; }
+  for (const s of stars) { const k = .35 + .65 * (.55 + .45 * Math.sin(t * s.sp + s.ph)); put(s.r, s.c, s.ch, [.8, .85, 1], k); }
+  for (const f of flakes) put(Math.floor((f.y + f.v * t) % ROWS), Math.floor(((f.x + 2.5 * Math.sin(t * .8 + f.ph)) % COLS + COLS) % COLS), f.ch, [.85, .9, 1], 1);
+  // tree: z-buffer pass
+  let lo = 0, hi = NP; while (lo < hi) { const m = (lo + hi) >> 1; if (P.t0[m] <= t) lo = m + 1; else hi = m; } const K = lo;
+  for (let i = 0; i < K; i++) {
+    let x = P.px[i], y = P.py[i], z = P.pz[i];
+    if (P.pop[i]) { const s = easeBack((t - P.t0[i]) / .45); if (s < .05) continue; x = P.cx[i] + (x - P.cx[i]) * s; y = P.cy[i] + (y - P.cy[i]) * s; z = P.cz[i] + (z - P.cz[i]) * s; }
+    const xr = x * cs + z * sn, zr = -x * sn + z * cs, f = CAM / (CAM - zr);
+    const ix = Math.floor(COLS / 2 + xr * f * SCALE * ASPECT), iy = Math.floor(ROWS / 2 - (y - YC) * f * SCALE);
+    if (ix < 0 || ix >= COLS || iy < 0 || iy >= ROWS) continue;
+    const ci = iy * COLS + ix; if (zr > zbuf[ci]) { zbuf[ci] = zr; owner[ci] = i; }
+  }
+  const LX = -.45, LY = .55, LZ = .7, ll = Math.hypot(LX, LY, LZ), lx = LX / ll, ly = LY / ll, lz = LZ / ll;
+  let hx = lx, hy = ly, hz = lz + 1; const hl = Math.hypot(hx, hy, hz); hx /= hl; hy /= hl; hz /= hl;
+  for (let ci = 0; ci < CELLS; ci++) {
+    const i = owner[ci]; if (i < 0) continue;
+    const nx = P.nx[i] * cs + P.nz[i] * sn, ny = P.ny[i], nz = -P.nx[i] * sn + P.nz[i] * cs;
+    const diff = clamp(nx * lx + ny * ly + nz * lz, 0, 1), spec = Math.pow(clamp(nx * hx + ny * hy + nz * hz, 0, 1), 22);
+    const mat = P.mat[i], ph = P.ph[i], age = t - P.t0[i], sp = Math.pow(clamp(Math.sin(t * 5 + ph * 40), 0, 1), 3);
+    let lum, white = 0;
+    if (mat === TINSEL) { lum = .55 + .4 * diff + .8 * sp; white = sp * .6; }
+    else if (mat === BALL) { lum = .3 + .55 * diff + .9 * spec; white = spec; }
+    else if (mat === LIGHT) lum = .95 + .45 * (.5 + .5 * Math.sin(t * 2.4 + ph * TAU));
+    else lum = P.base[i] * (.28 + .85 * diff);
+    lum += .7 * clamp(1 - age / .5, 0, 1);
+    const k = clamp(.3 + .9 * lum, 0, 1.25), glow = mat === LIGHT ? .25 : 0;
+    cR[ci] = clamp(P.cr[i] * k + white + glow, 0, 1); cG[ci] = clamp(P.cg[i] * k + white + glow, 0, 1); cB[ci] = clamp(P.cb[i] * k + white + glow, 0, 1);
+    const idx = clamp(Math.floor(lum * (RAMP.length - 1) + (P.jit[i] - .35) * 2.2), 0, RAMP.length - 1);
+    chr[ci] = (mat === LIGHT || (mat === BALL && spec > .5)) ? gc("@") : ramp[idx];
+  }
+  // star
+  if (t > T_STAR) {
+    const on = smooth((t - T_STAR) / .3), fl = Math.pow(clamp(1 - (t - T_STAR) / 1, 0, 1), 2);
+    star(COLS >> 1, Math.floor(ROWS / 2 - (Y1 + .09 - YC) * SCALE), Math.floor((2 + 2.2 * on) * (1 + .05 * Math.sin(t * 4))), fl);
+  }
+  // message
+  if (t > T_MSG) {
+    const row = GROUND_ROW + 7, x0 = (COLS - MESSAGE.length) >> 1, shown = Math.min(MESSAGE.length, Math.floor((t - T_MSG) * 10)), tints = [RED, GOLD, GREEN];
+    for (let r = row - 1; r <= row + 1; r++) for (let c = Math.max(x0 - 3, 0); c < Math.min(COLS, x0 + shown + 3); c++) chr[r * COLS + c] = 0;
+    for (let i = 0; i < shown; i++) if (MESSAGE[i] !== " ") put(row, x0 + i, MESSAGE[i], tints[(Math.floor(i / 2) + Math.floor(t * 1.5)) % 3], .85 + .25 * Math.sin(t * 5 + i));
+  }
+  let n = 0; for (let i = 0; i < CELLS; i++) if (chr[i]) n++;
+  let nl = 0; while (nl < lightT0.length && lightT0[nl] <= t) nl++;
+  info.rot = rotDeg; info.lights = nl; info.letters = n; info.t = t;
+}
+
+// ---------- canvas
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
+cv.width = W * dpr; cv.height = H * dpr;
+const FONT = `${FONT_PX}px ${getComputedStyle(document.documentElement).getPropertyValue('--mono')}`;
+const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#04060c'; ctx.fillRect(0, 0, W, H);
+  ctx.font = FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const i = r * COLS + c, g = chr[i]; if (!g) continue;
+    ctx.fillStyle = `rgb(${cR[i] * 255 | 0},${cG[i] * 255 | 0},${cB[i] * 255 | 0})`;
+    ctx.fillText(String.fromCharCode(32 + g), c * CW + CW / 2, r * CH + CH / 2 + 1);
+  }
+}
+
+let t = 0, paused = false, last = performance.now();
+function tick(now) {
+  const dt = Math.min((now - last) / 1000, .1); last = now;
+  if (!paused) { t += dt; if (t > T_LOOP) t = 0; }
+  frame(t); draw(); requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+const pb = document.getElementById('pause');
+pb.onclick = () => { paused = !paused; pb.textContent = paused ? 'Play' : 'Pause'; };
+document.getElementById('restart').onclick = () => { t = 0; };
+cv.addEventListener('click', () => pb.click());
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); pb.click(); } if (e.key === 'r' || e.key === 'R') t = 0; });
+
+})();
+</script>
+
+</body>
+</html>
