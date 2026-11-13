@@ -278,37 +278,18 @@ const pb = document.getElementById('pause');
 pb.onclick = () => { paused = !paused; pb.textContent = paused ? 'Play' : 'Pause'; };
 document.getElementById('restart').onclick = () => { t = 0; };
 
-// ---------- music: Jingle Bells (public domain), synthesised in the browser; starts on the first tap
+// ---------- music: your own file, starts on the first tap
 const hint = document.getElementById('hint');
-let actx = null, master = null, started = false, muted = false;
-const F = { C: 523.25, D: 587.33, E: 659.25, F: 698.46, G: 783.99 };
-const SONG = [['E',1],['E',1],['E',2],['E',1],['E',1],['E',2],['E',1],['G',1],['C',1.5],['D',.5],['E',4],
-  ['F',1],['F',1],['F',1.5],['F',.5],['F',1],['E',1],['E',1],['E',.5],['E',.5],['E',1],['D',1],['D',1],['E',1],['D',2],['G',2]];
-const BEAT = 60 / 138, SONG_LEN = SONG.reduce((a, n) => a + n[1], 0) * BEAT + BEAT * 2;
-function bell(freq, when, dur) {
-  for (const [mult, vol, type] of [[1, .22, 'sine'], [2, .08, 'sine'], [3.01, .03, 'triangle']]) {
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = type; o.frequency.value = freq * mult;
-    g.gain.setValueAtTime(0, when); g.gain.linearRampToValueAtTime(vol, when + .012);
-    g.gain.exponentialRampToValueAtTime(.0008, when + Math.max(dur, .4) + .5);
-    o.connect(g); g.connect(master); o.start(when); o.stop(when + dur + 1);
-  }
-}
-function scheduleLoop(t0) {
-  let t = t0;
-  for (const [n, b] of SONG) { bell(F[n], t, b * BEAT * .9); bell(F[n] / 2, t, b * BEAT * .9); t += b * BEAT; }
-  setTimeout(() => scheduleLoop(t0 + SONG_LEN), Math.max(0, (t0 + SONG_LEN - actx.currentTime - .5) * 1000));
-}
+const song = new Audio('music.mp3'); song.loop = true; song.preload = 'auto';
+let started = false;
 function startMusic() {
   if (started) return;
-  try {
-    actx = new (window.AudioContext || window.webkitAudioContext)();
-    master = actx.createGain(); master.gain.value = .6; master.connect(actx.destination);
-    actx.resume().then(() => { started = true; scheduleLoop(actx.currentTime + .1); if (hint) hint.hidden = true; });
-  } catch (e) { /* no audio on this device */ }
+  song.play().then(() => { started = true; if (hint) hint.hidden = true; }).catch(() => { /* browser wants a tap first */ });
 }
-function toggleMute() { if (!started) return; muted = !muted; master.gain.value = muted ? 0 : .6; }
+function toggleMute() { song.muted = !song.muted; }
 cv.addEventListener('pointerdown', () => { if (started) toggleMute(); else startMusic(); });
+addEventListener('keydown', () => startMusic());
+startMusic();   // works at once where the browser allows autoplay, otherwise on the first tap
 addEventListener('keydown', () => startMusic());
 startMusic();   // works at once where the browser allows autoplay, otherwise on the first tap
 
